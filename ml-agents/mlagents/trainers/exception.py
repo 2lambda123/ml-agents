@@ -11,6 +11,22 @@ class TrainerError(Exception):
     pass
 
 
+class TrainerConfigError(Exception):
+    """
+    Any error related to the configuration of trainers in the ML-Agents Toolkit.
+    """
+
+    pass
+
+
+class TrainerConfigWarning(Warning):
+    """
+    Any warning related to the configuration of trainers in the ML-Agents Toolkit.
+    """
+
+    pass
+
+
 class CurriculumError(TrainerError):
     """
     Any error related to training with a curriculum.
@@ -38,6 +54,22 @@ class CurriculumConfigError(CurriculumError):
 class MetaCurriculumError(TrainerError):
     """
     Any error related to the configuration of a metacurriculum.
+    """
+
+    pass
+
+
+class SamplerException(TrainerError):
+    """
+    Related to errors with the sampler actions.
+    """
+
+    pass
+
+
+class UnityTrainerException(TrainerError):
+    """
+    Related to errors with the Trainer.
     """
 
     pass

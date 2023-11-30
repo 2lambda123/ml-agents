@@ -1,324 +1,92 @@
 import pytest
-import yaml
-import os
 import io
+import os
 from unittest.mock import patch
 
-import mlagents.trainers.trainer_util as trainer_util
-from mlagents.trainers.trainer_util import load_config, _load_config
-from mlagents.trainers.trainer_metrics import TrainerMetrics
+from mlagents.trainers.trainer import TrainerFactory
+from mlagents.trainers.cli_utils import load_config, _load_config
 from mlagents.trainers.ppo.trainer import PPOTrainer
-from mlagents.trainers.bc.offline_trainer import OfflineBCTrainer
-from mlagents.trainers.bc.online_trainer import OnlineBCTrainer
-from mlagents.envs.exception import UnityEnvironmentException
+from mlagents.trainers.exception import TrainerConfigError, UnityTrainerException
+from mlagents.trainers.settings import RunOptions
+from mlagents.trainers.tests.dummy_config import ppo_dummy_config
+from mlagents.trainers.environment_parameter_manager import EnvironmentParameterManager
+from mlagents.trainers.directory_utils import validate_existing_directories
 
 
 @pytest.fixture
 def dummy_config():
-    return yaml.safe_load(
-        """
-        default:
-            trainer: ppo
-            batch_size: 32
-            beta: 5.0e-3
-            buffer_size: 512
-            epsilon: 0.2
-            gamma: 0.99
-            hidden_units: 128
-            lambd: 0.95
-            learning_rate: 3.0e-4
-            max_steps: 5.0e4
-            normalize: true
-            num_epoch: 5
-            num_layers: 2
-            time_horizon: 64
-            sequence_length: 64
-            summary_freq: 1000
-            use_recurrent: false
-            memory_size: 8
-            use_curiosity: false
-            curiosity_strength: 0.0
-            curiosity_enc_size: 1
-        """
-    )
+    return RunOptions(behaviors={"testbrain": ppo_dummy_config()})
 
 
-@pytest.fixture
-def dummy_online_bc_config():
-    return yaml.safe_load(
-        """
-        default:
-            trainer: online_bc
-            brain_to_imitate: ExpertBrain
-            batches_per_epoch: 16
-            batch_size: 32
-            beta: 5.0e-3
-            buffer_size: 512
-            epsilon: 0.2
-            gamma: 0.99
-            hidden_units: 128
-            lambd: 0.95
-            learning_rate: 3.0e-4
-            max_steps: 5.0e4
-            normalize: true
-            num_epoch: 5
-            num_layers: 2
-            time_horizon: 64
-            sequence_length: 64
-            summary_freq: 1000
-            use_recurrent: false
-            memory_size: 8
-            use_curiosity: false
-            curiosity_strength: 0.0
-            curiosity_enc_size: 1
-        """
-    )
-
-
-@pytest.fixture
-def dummy_offline_bc_config():
-    return yaml.safe_load(
-        """
-        default:
-            trainer: offline_bc
-            demo_path: """
-        + os.path.dirname(os.path.abspath(__file__))
-        + """/test.demo
-            batches_per_epoch: 16
-            batch_size: 32
-            beta: 5.0e-3
-            buffer_size: 512
-            epsilon: 0.2
-            gamma: 0.99
-            hidden_units: 128
-            lambd: 0.95
-            learning_rate: 3.0e-4
-            max_steps: 5.0e4
-            normalize: true
-            num_epoch: 5
-            num_layers: 2
-            time_horizon: 64
-            sequence_length: 64
-            summary_freq: 1000
-            use_recurrent: false
-            memory_size: 8
-            use_curiosity: false
-            curiosity_strength: 0.0
-            curiosity_enc_size: 1
-        """
-    )
-
-
-@pytest.fixture
-def dummy_offline_bc_config_with_override():
-    base = dummy_offline_bc_config()
-    base["testbrain"] = {}
-    base["testbrain"]["normalize"] = False
-    return base
-
-
-@pytest.fixture
-def dummy_bad_config():
-    return yaml.safe_load(
-        """
-        default:
-            trainer: incorrect_trainer
-            brain_to_imitate: ExpertBrain
-            batches_per_epoch: 16
-            batch_size: 32
-            beta: 5.0e-3
-            buffer_size: 512
-            epsilon: 0.2
-            gamma: 0.99
-            hidden_units: 128
-            lambd: 0.95
-            learning_rate: 3.0e-4
-            max_steps: 5.0e4
-            normalize: true
-            num_epoch: 5
-            num_layers: 2
-            time_horizon: 64
-            sequence_length: 64
-            summary_freq: 1000
-            use_recurrent: false
-            memory_size: 8
-        """
-    )
-
-
-@patch("mlagents.envs.brain.BrainParameters")
-def test_initialize_trainer_parameters_override_defaults(BrainParametersMock):
-    summaries_dir = "test_dir"
-    run_id = "testrun"
-    model_path = "model_dir"
-    keep_checkpoints = 1
-    train_model = True
-    load_model = False
-    seed = 11
-
-    base_config = dummy_offline_bc_config_with_override()
-    expected_config = base_config["default"]
-    expected_config["summary_path"] = summaries_dir + f"/{run_id}_testbrain"
-    expected_config["model_path"] = model_path + "/testbrain"
-    expected_config["keep_checkpoints"] = keep_checkpoints
-
-    # Override value from specific brain config
-    expected_config["normalize"] = False
-
-    brain_params_mock = BrainParametersMock()
-    external_brains = {"testbrain": brain_params_mock}
-
-    def mock_constructor(self, brain, trainer_parameters, training, load, seed, run_id):
-        assert brain == brain_params_mock
-        assert trainer_parameters == expected_config
-        assert training == train_model
-        assert load == load_model
-        assert seed == seed
-        assert run_id == run_id
-
-    with patch.object(OfflineBCTrainer, "__init__", mock_constructor):
-        trainers = trainer_util.initialize_trainers(
-            trainer_config=base_config,
-            external_brains=external_brains,
-            summaries_dir=summaries_dir,
-            run_id=run_id,
-            model_path=model_path,
-            keep_checkpoints=keep_checkpoints,
-            train_model=train_model,
-            load_model=load_model,
-            seed=seed,
-        )
-        assert "testbrain" in trainers
-        assert isinstance(trainers["testbrain"], OfflineBCTrainer)
-
-
-@patch("mlagents.envs.brain.BrainParameters")
-def test_initialize_online_bc_trainer(BrainParametersMock):
-    summaries_dir = "test_dir"
-    run_id = "testrun"
-    model_path = "model_dir"
-    keep_checkpoints = 1
-    train_model = True
-    load_model = False
-    seed = 11
-
-    base_config = dummy_online_bc_config()
-    expected_config = base_config["default"]
-    expected_config["summary_path"] = summaries_dir + f"/{run_id}_testbrain"
-    expected_config["model_path"] = model_path + "/testbrain"
-    expected_config["keep_checkpoints"] = keep_checkpoints
-
-    brain_params_mock = BrainParametersMock()
-    external_brains = {"testbrain": brain_params_mock}
-
-    def mock_constructor(self, brain, trainer_parameters, training, load, seed, run_id):
-        assert brain == brain_params_mock
-        assert trainer_parameters == expected_config
-        assert training == train_model
-        assert load == load_model
-        assert seed == seed
-        assert run_id == run_id
-
-    with patch.object(OnlineBCTrainer, "__init__", mock_constructor):
-        trainers = trainer_util.initialize_trainers(
-            trainer_config=base_config,
-            external_brains=external_brains,
-            summaries_dir=summaries_dir,
-            run_id=run_id,
-            model_path=model_path,
-            keep_checkpoints=keep_checkpoints,
-            train_model=train_model,
-            load_model=load_model,
-            seed=seed,
-        )
-        assert "testbrain" in trainers
-        assert isinstance(trainers["testbrain"], OnlineBCTrainer)
-
-
-@patch("mlagents.envs.brain.BrainParameters")
-def test_initialize_ppo_trainer(BrainParametersMock):
-    brain_params_mock = BrainParametersMock()
-    external_brains = {"testbrain": BrainParametersMock()}
-    summaries_dir = "test_dir"
-    run_id = "testrun"
-    model_path = "model_dir"
-    keep_checkpoints = 1
+@patch("mlagents_envs.base_env.BehaviorSpec")
+def test_initialize_ppo_trainer(BehaviorSpecMock, dummy_config):
+    brain_name = "testbrain"
+    training_behaviors = {"testbrain": BehaviorSpecMock()}
+    output_path = "results_dir"
     train_model = True
     load_model = False
     seed = 11
     expected_reward_buff_cap = 1
 
-    base_config = dummy_config()
-    expected_config = base_config["default"]
-    expected_config["summary_path"] = summaries_dir + f"/{run_id}_testbrain"
-    expected_config["model_path"] = model_path + "/testbrain"
-    expected_config["keep_checkpoints"] = keep_checkpoints
+    base_config = dummy_config.behaviors
+    expected_config = ppo_dummy_config()
 
     def mock_constructor(
         self,
         brain,
         reward_buff_cap,
-        trainer_parameters,
+        trainer_settings,
         training,
         load,
         seed,
-        run_id,
-        multi_gpu,
+        artifact_path,
     ):
-        self.trainer_metrics = TrainerMetrics("", "")
-        assert brain == brain_params_mock
-        assert trainer_parameters == expected_config
+        assert brain == brain_name
+        assert trainer_settings == expected_config
         assert reward_buff_cap == expected_reward_buff_cap
         assert training == train_model
         assert load == load_model
         assert seed == seed
-        assert run_id == run_id
-        assert multi_gpu == multi_gpu
+        assert artifact_path == os.path.join(output_path, brain_name)
 
     with patch.object(PPOTrainer, "__init__", mock_constructor):
-        trainers = trainer_util.initialize_trainers(
+        trainer_factory = TrainerFactory(
             trainer_config=base_config,
-            external_brains=external_brains,
-            summaries_dir=summaries_dir,
-            run_id=run_id,
-            model_path=model_path,
-            keep_checkpoints=keep_checkpoints,
+            output_path=output_path,
             train_model=train_model,
             load_model=load_model,
             seed=seed,
+            param_manager=EnvironmentParameterManager(),
         )
+        trainers = {}
+        for brain_name in training_behaviors.keys():
+            trainers[brain_name] = trainer_factory.generate(brain_name)
         assert "testbrain" in trainers
         assert isinstance(trainers["testbrain"], PPOTrainer)
 
 
-@patch("mlagents.envs.brain.BrainParameters")
-def test_initialize_invalid_trainer_raises_exception(BrainParametersMock):
-    summaries_dir = "test_dir"
-    run_id = "testrun"
-    model_path = "model_dir"
-    keep_checkpoints = 1
-    train_model = True
-    load_model = False
-    seed = 11
-    bad_config = dummy_bad_config()
-    external_brains = {"testbrain": BrainParametersMock()}
+def test_handles_no_config_provided():
+    """
+    Make sure the trainer setup handles no configs provided at all.
+    """
+    brain_name = "testbrain"
+    no_default_config = RunOptions().behaviors
+    # Pretend this was created without a YAML file
+    no_default_config.set_config_specified(False)
 
-    with pytest.raises(UnityEnvironmentException):
-        trainer_util.initialize_trainers(
-            trainer_config=bad_config,
-            external_brains=external_brains,
-            summaries_dir=summaries_dir,
-            run_id=run_id,
-            model_path=model_path,
-            keep_checkpoints=keep_checkpoints,
-            train_model=train_model,
-            load_model=load_model,
-            seed=seed,
-        )
+    trainer_factory = TrainerFactory(
+        trainer_config=no_default_config,
+        output_path="output_path",
+        train_model=True,
+        load_model=False,
+        seed=42,
+        param_manager=EnvironmentParameterManager(),
+    )
+    trainer_factory.generate(brain_name)
 
 
 def test_load_config_missing_file():
-    with pytest.raises(UnityEnvironmentException):
+    with pytest.raises(TrainerConfigError):
         load_config("thisFileDefinitelyDoesNotExist.yaml")
 
 
@@ -339,6 +107,33 @@ you:
 - not
   - parse
     """
-    with pytest.raises(UnityEnvironmentException):
+    with pytest.raises(TrainerConfigError):
         fp = io.StringIO(file_contents)
         _load_config(fp)
+
+
+def test_existing_directories(tmp_path):
+    output_path = os.path.join(tmp_path, "runid")
+    # Test fresh new unused path - should do nothing.
+    validate_existing_directories(output_path, False, False)
+    # Test resume with fresh path - should throw an exception.
+    with pytest.raises(UnityTrainerException):
+        validate_existing_directories(output_path, True, False)
+
+    # make a directory
+    os.mkdir(output_path)
+    # Test try to train w.o. force, should complain
+    with pytest.raises(UnityTrainerException):
+        validate_existing_directories(output_path, False, False)
+    # Test try to train w/ resume - should work
+    validate_existing_directories(output_path, True, False)
+    # Test try to train w/ force - should work
+    validate_existing_directories(output_path, False, True)
+
+    # Test initialize option
+    init_path = os.path.join(tmp_path, "runid2")
+    with pytest.raises(UnityTrainerException):
+        validate_existing_directories(output_path, False, True, init_path)
+    os.mkdir(init_path)
+    # Should pass since the directory exists now.
+    validate_existing_directories(output_path, False, True, init_path)
